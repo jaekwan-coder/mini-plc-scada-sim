@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>미니 PLC-PC SCADA 시뮬레이션 - 라이브 데모</title>
+<style>
+  :root {
+    --surface-1: #f4f4f5;
+    --border: #d4d4d8;
+    --border-strong: #71717a;
+    --text-secondary: #52525b;
+    --text-muted: #a1a1aa;
+    --text-accent: #0f6e56;
+    --bg-accent: #e6f4f1;
+    --fill-success: #16a34a;
+    --font-mono: "SFMono-Regular", Consolas, monospace;
+    --radius: 6px;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    max-width: 720px;
+    margin: 40px auto;
+    padding: 0 20px;
+    color: #18181b;
+    background: #ffffff;
+  }
+  h1 { font-size: 20px; }
+  p.sub { color: var(--text-secondary); font-size: 14px; margin-bottom: 24px; }
+  button {
+    font-size: 14px; padding: 6px 14px; border-radius: var(--radius);
+    border: 1px solid var(--border-strong); background: #ffffff; cursor: pointer;
+  }
+  button:hover { background: var(--surface-1); }
+  #pistonRod { transform-box: fill-box; transform-origin: top; transition: transform .3s ease; }
+  #pistonRod.extended { transform: scaleY(1.8); }
+  #sensorLight { transition: fill .15s ease; }
+  #sensorLight.on { fill: var(--fill-success); }
+  #part { transition: opacity .3s ease; }
+</style>
+</head>
+<body>
+
+<h1>미니 PLC-PC SCADA 시뮬레이션 — 라이브 데모</h1>
+<p class="sub">
+  실제 코드는 <a href="https://github.com/">GitHub 저장소</a>의 plc_project 폴더를 참고하세요.
+  이 페이지는 그 안의 plc_logic.py 상태머신 로직을 그대로 흉내 낸 시각화입니다.
+</p>
+
+<div style="display:flex; align-items:center; gap:16px; margin-bottom:16px; flex-wrap:wrap;">
+  <button id="btnStart" onclick="toggleRun()">시작</button>
+  <button id="btnStep" onclick="stepOnce()">1 사이클</button>
+  <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text-secondary);">
+    속도
+    <input type="range" id="speed" min="1" max="5" value="3" step="1" style="width:100px;">
+  </label>
+  <span id="stateBadge" style="font-size:13px; font-weight:500; padding:4px 12px; border-radius:var(--radius); background:var(--bg-accent); color:var(--text-accent);">IDLE</span>
+</div>
+
+<svg width="100%" viewBox="0 0 680 220" style="display:block; margin-bottom:16px;">
+  <rect x="60" y="140" width="520" height="18" rx="4" fill="var(--surface-1)" stroke="var(--border-strong)" stroke-width="0.5"/>
+  <line x1="300" y1="100" x2="300" y2="140" stroke="var(--border-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <circle id="sensorLight" cx="300" cy="92" r="6" fill="var(--text-muted)"/>
+  <text x="300" y="76" text-anchor="middle" fill="var(--text-secondary)" font-size="12">센서1</text>
+  <rect x="465" y="40" width="30" height="30" fill="var(--surface-1)" stroke="var(--border-strong)" stroke-width="0.5"/>
+  <text x="480" y="30" text-anchor="middle" fill="var(--text-secondary)" font-size="12">실린더</text>
+  <rect id="pistonRod" x="475" y="70" width="10" height="40" fill="var(--border-strong)"/>
+  <rect x="452" y="162" width="56" height="30" rx="4" fill="var(--surface-1)" stroke="var(--border-strong)" stroke-width="0.5"/>
+  <text x="480" y="181" text-anchor="middle" fill="var(--text-secondary)" font-size="12">배출함</text>
+  <rect id="part" x="90" y="116" width="24" height="24" rx="4" fill="#1D9E75" stroke="#0F6E56" stroke-width="0.5"/>
+</svg>
+
+<div style="border:0.5px solid var(--border); border-radius:var(--radius); padding:8px 12px; font-family:var(--font-mono); font-size:12px; color:var(--text-secondary);">
+  <div id="log">대기 중...</div>
+</div>
+
+<script>
+let running=false, busy=false, scanCount=0, currentX=90;
+const part=document.getElementById('part');
+const piston=document.getElementById('pistonRod');
+const sensorLight=document.getElementById('sensorLight');
+const stateBadge=document.getElementById('stateBadge');
+const btnStart=document.getElementById('btnStart');
+const speedSlider=document.getElementById('speed');
+const logEl=document.getElementById('log');
+let logLines=[];
+
+function setState(t){ stateBadge.textContent=t; }
+function logAdd(t){
+  scanCount++;
+  logLines.push('['+String(scanCount).padStart(4,'0')+'] '+t);
+  if(logLines.length>6) logLines.shift();
+  logEl.innerHTML=logLines.map(l=>'<div>'+l+'</div>').join('');
+}
+function setPartX(x){ part.setAttribute('x', x-12); currentX=x; }
+
+function animateTo(targetX, duration, cb){
+  const startX=currentX, startTime=performance.now();
+  function step(now){
+    const t=Math.min((now-startTime)/duration, 1);
+    setPartX(startX+(targetX-startX)*t);
+    if(t<1){ requestAnimationFrame(step); } else if(cb){ cb(); }
+  }
+  requestAnimationFrame(step);
+}
+
+function cycle(onComplete){
+  busy=true;
+  const speed=Number(speedSlider.value);
+  setState('이동 중');
+  logAdd('컨베이어 구동 - 부품 이동 시작');
+  part.style.opacity=1;
+  animateTo(300, 2400/speed, ()=>{
+    sensorLight.classList.add('on');
+    setState('센서 감지');
+    logAdd('센서1 ON - 부품 감지');
+    setTimeout(()=>{
+      sensorLight.classList.remove('on');
+      setState('이동 중');
+      animateTo(480, 1400/speed, ()=>{
+        setState('정지');
+        logAdd('정지 위치 도달 - 컨베이어 정지');
+        setTimeout(()=>{
+          setState('푸시');
+          piston.classList.add('extended');
+          logAdd('실린더 전진 - 부품 배출');
+          setTimeout(()=>{
+            part.style.opacity=0;
+            setTimeout(()=>{
+              piston.classList.remove('extended');
+              logAdd('실린더 후진 완료');
+              setTimeout(()=>{
+                setPartX(90);
+                busy=false;
+                setState(running?'대기':'IDLE');
+                if(onComplete) onComplete();
+              }, 400/speed);
+            }, 400/speed);
+          }, 300/speed);
+        }, 300/speed);
+      });
+    }, 300/speed);
+  });
+}
+
+function toggleRun(){
+  running=!running;
+  btnStart.textContent=running?'정지':'시작';
+  if(running){
+    logAdd('=== 자동 운전 시작 ===');
+    if(!busy) loop();
+  } else {
+    logAdd('=== 정지 명령 (현재 사이클 종료 후 정지) ===');
+  }
+}
+function loop(){
+  if(!running) return;
+  cycle(()=>{ if(running) setTimeout(loop, 500); });
+}
+function stepOnce(){
+  if(busy || running) return;
+  logAdd('=== 수동 1사이클 실행 ===');
+  cycle(()=>{});
+}
+</script>
+</body>
+</html>
